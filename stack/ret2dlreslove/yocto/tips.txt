@@ -1,0 +1,17 @@
+比如输入: 1111.2222.3333.4444
+
+ebp-0xc	 	#12		edx		2222
+ebp-0x10	#16		ecx		3333
+ebp-0x14	#20     eax		1111
+
+then...
+
+call exc(edx,eax)
+
+0000| 0xbffff9dc --> 0x8ae 		# 2222
+0004| 0xbffff9e0 --> 0x457 		# 1111
+0008| 0xbffff9e4 --> 0x80495c9 (".3333.4444\n") 
+0012| 0xbffff9e8 --> 0x457 
+0016| 0xbffff9ec --> 0xd05 
+0020| 0xbffff9f0 --> 0x8ae 
+

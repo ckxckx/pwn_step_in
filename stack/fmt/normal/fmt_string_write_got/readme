@@ -1,0 +1,90 @@
+## pwn3 (pwn, 350p)
+
+提供了以下文件：  
+[pwn3](./pwn3)
+
+---------------------------------------
+
+### 0x1 分析程序
+执行下程序，发现要输入用户名，用IDA分析下，是简单的凯撒加密，算下就得到用户名了：
+
+```
+username = bytearray("sysbdmin")
+for i in range(len(username)):
+    username[i] -= 1
+print username
+
+# below is the output:
+# rxraclhm
+```
+
+继续往后分析，发现是一个类似ftp服务器的程序，可以输入`put|get|dir`三个命令。
++ 1. put: 用`malloc`分配244个字节，建立如以下数据结构，多次的put将形成一条链表。
+```
+struct _FILE {
+    char filename[40]; 
+    char content[200];
+    struct _FILE *previous;
+};
+```
+
++ 2. get: 要求先输入filename，然后遍历链表，匹配filename，找到则输出内容。找不到的话，是输出当前栈里的内容。
+```
+int get_file()
+{
+  char dest; // [sp+1Ch] [bp-FCh]@5
+  char s1; // [sp+E4h] [bp-34h]@1
+  char *i; // [sp+10Ch] [bp-Ch]@3
+
+  printf("enter the file name you want to get:");
+  __isoc99_scanf("%40s", &s1);
+  if ( !strncmp(&s1, "flag", 4u) )
+    puts("too young, too simple");
+  for ( i = (char *)file_head; i; i = (char *)*((_DWORD *)i + 60) )
+  {
+    if ( !strcmp(i, &s1) )
+    {
+      strcpy(&dest, i + 40);
+      return printf(&dest);
+    }
+  }
+  return printf(&dest);
+}
+```
+
++ 3. dir: 遍历链表，将所有的的filename串起来输出。
+
+
+一开始以为是put和dir形成了漏洞，因为put的时候可以输入40个字节长度的filename,导致dir命令在复制的时候可以溢出。后来测试后发现不可行，溢出后覆盖了其它局部变量，导致访问异常，要设置正确的值，太难了。
+后来和esrever10交流的时候，说可能是`printf(&dest)`有问题，格式化字符串漏洞，马上搜了些关于格式化字符串漏洞的文章来看，发现确实是这里可以利用。见识还是太少了，仍需好好积累。
+
+### 0x2 构造exp
+借助格式化字符串漏洞，我们可以：
++ 1. 读取任意地址的内容
++ 2. 设置任意地址的内容
+
+由于服务器开了ASLR，思路是这样的：
++ 1. 先读取`puts@got`的内容，得到`puts`的地址，之后通过lib中偏移量固定的方式算出`system`的地址
++ 2. 将`system`地址写到`puts@got`里
++ 3. 让程序去执行`puts('/bin/sh')`, 这时实际是执行`system('/bin/sh')`
+
+详细代码请看[pwn3_exp.py](./pwn3_exp.py)
+
+### 0x3 总结
++ 本来是直接用`%n`直接一次写4个字节，但测试的时候，发现由于要输出太多字符，程序崩溃了。后来改用`%hhn`，一次只写一个字节，分四次写入。
++ 如果刚好是要写的数字是0，可以换成256，由于溢出了，最后的值还是0。有了这个认识，那么可以做到在一次`printf`里使用多次`%hhn`写多个字节。
++ 其实`system('/bin/sh;abcdefg12334')`也可以达到效果，不用强求用`system('/bin/sh')`
++ 可以用$修饰符直接操作我们感兴趣的参数，例如`8$`将操作format后的第8个参数
+```
+int a = 1, b = 2;
+printf("%2$d, %1$d\n", a, b);
+
+// below is the output:
+// 2, 1
+```
+
+### 0x4 参考资料
++ [格式化字符串漏洞简介](http://drops.wooyun.org/binary/7714)
++ [二进制漏洞之——邪恶的printf](http://drops.wooyun.org/binary/6259)
++ [SEED实验系列：格式化字符串漏洞实验 ](http://www.freebuf.com/articles/network/62473.html)
++ [shellcode之四：格式化串漏洞 ](http://blog.csdn.net/azloong/article/details/6158458)
